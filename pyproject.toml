@@ -60,6 +60,9 @@ cpu = [
 gpu = [
     "torch==2.9.1",
 ]
+gemini = [
+    "google-genai>=2.0.0",
+]
 
 [tool.uv]
 default-groups = []
