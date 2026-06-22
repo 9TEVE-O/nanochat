@@ -24,14 +24,10 @@ class GeminiClient:
     """Thin wrapper around google-genai for text completion."""
 
     def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None):
+        """Initialise the client, resolving the API key from arg or GEMINI_API_KEY env var."""
         if _genai is None:
             raise ImportError(
-                "google-genai is not installed. Run: pip install nanochat[gemini]"
-    def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None):
-        if genai is None:
-            raise ImportError(
-                "The 'google-genai' package is required to use GeminiClient. "
-                "Please install it with: pip install 'nanochat[gemini]'"
+                "google-genai is not installed. Run: pip install 'nanochat[gemini]'"
             )
         key = api_key or os.environ.get("GEMINI_API_KEY")
         if not key:
