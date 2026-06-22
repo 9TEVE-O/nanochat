@@ -1,5 +1,7 @@
 """Gemini API client — optional inference backend for nanochat.
 
+Requires the gemini extra: pip install nanochat[gemini]
+
 Usage:
     export GEMINI_API_KEY=your_key
     from nanochat.gemini_client import GeminiClient
@@ -9,7 +11,11 @@ Usage:
 """
 
 import os
-from google import genai
+
+try:
+    from google import genai as _genai
+except ImportError:
+    _genai = None
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 
@@ -18,13 +24,17 @@ class GeminiClient:
     """Thin wrapper around google-genai for text completion."""
 
     def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None):
+        if _genai is None:
+            raise ImportError(
+                "google-genai is not installed. Run: pip install nanochat[gemini]"
+            )
         key = api_key or os.environ.get("GEMINI_API_KEY")
         if not key:
             raise ValueError(
                 "No Gemini API key found. Set the GEMINI_API_KEY environment variable "
                 "or pass api_key= to GeminiClient()."
             )
-        self._client = genai.Client(api_key=key)
+        self._client = _genai.Client(api_key=key)
         self.model = model
 
     def complete(self, prompt: str) -> str:
