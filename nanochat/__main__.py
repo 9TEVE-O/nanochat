@@ -49,10 +49,11 @@ def main() -> None:
     print("-" * 50)
 
     conversation_tokens = [bos]
+    is_single_prompt = bool(args.prompt)
 
     while True:
-        if args.prompt:
-            user_input = args.prompt
+        if is_single_prompt:
+            user_input = args.prompt.strip()
         else:
             try:
                 user_input = input("\nUser: ").strip()
@@ -67,9 +68,13 @@ def main() -> None:
         if user_input.lower() == "clear":
             conversation_tokens = [bos]
             print("Conversation cleared.")
+            if is_single_prompt:
+                break
             continue
 
         if not user_input:
+            if is_single_prompt:
+                break
             continue
 
         conversation_tokens.append(user_start)
@@ -95,7 +100,7 @@ def main() -> None:
             response_tokens.append(assistant_end)
         conversation_tokens.extend(response_tokens)
 
-        if args.prompt:
+        if is_single_prompt:
             break
 
 
