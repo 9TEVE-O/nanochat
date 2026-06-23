@@ -17,6 +17,13 @@ dependencies = [
     "wandb>=0.21.3",
 ]
 
+[project.scripts]
+nanochat = "nanochat.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [dependency-groups]
 dev = [
     "ipykernel>=7.1.0",
