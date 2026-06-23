@@ -10,7 +10,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Chat with a nanochat model")
     parser.add_argument("-i", "--source", type=str, default="sft",
-                        help="Model source: sft|rl")
+                        choices=["base", "sft", "rl"],
+                        help="Model source: base|sft|rl")
     parser.add_argument("-g", "--model-tag", type=str, default=None,
                         help="Model tag to load")
     parser.add_argument("-s", "--step", type=int, default=None,
