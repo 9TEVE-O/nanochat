@@ -171,45 +171,38 @@ def test_interactive_keyboard_interrupt_exits(capsys):
     assert "Goodbye!" in capsys.readouterr().out
 
 
-def test_interactive_empty_input_is_ignored():
-    """An empty line is skipped and the loop continues to process the next input."""
-    # If the loop did NOT continue after the empty line, generate() would never be
-    # called. Asserting it IS called proves the loop kept running.
+def test_interactive_empty_input_is_ignored(capsys):
+    """An empty line is skipped; the loop continues and can still generate."""
     _, _, _, mock_engine_inst = _call_main([], inputs=["", "Hello", "quit"])
     mock_engine_inst.generate.assert_called_once()
+    assert "Assistant:" in capsys.readouterr().out
 
 
 def test_interactive_clear_resets_conversation_tokens(capsys):
-    """'clear' resets conversation_tokens to [bos]; generate() after clear receives
-    a shorter token sequence than it did before the clear."""
+    """'clear' resets conversation_tokens to [bos]; the generate() call after clear
+    receives exactly [bos, user_start, *msg_bytes, user_end, assistant_start]."""
     sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
     mock_engine_inst.generate.side_effect = [
         iter([([42], None)]),  # response to "Hello"
-        iter([([43], None)]),  # response to "World"
-        iter([([44], None)]),  # response to "Again" (after clear)
+        iter([([44], None)]),  # response to "World" (after clear)
     ]
 
     with ExitStack() as stack:
         stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
         stack.enter_context(patch("sys.argv", ["nanochat"]))
         stack.enter_context(
-            patch("builtins.input", side_effect=["Hello", "World", "clear", "Again", "quit"])
+            patch("builtins.input", side_effect=["Hello", "clear", "World", "quit"])
         )
         from nanochat.__main__ import main
         main()
 
     assert "Conversation cleared." in capsys.readouterr().out
-    assert mock_engine_inst.generate.call_count == 3
+    assert mock_engine_inst.generate.call_count == 2
 
-    # After two full exchanges the conversation has grown. After 'clear' it resets to
-    # [bos] only, so the token sequence passed to the third generate() call must be
-    # shorter than the one passed to the second call.
-    second_len = len(mock_engine_inst.generate.call_args_list[1][0][0])
-    third_len = len(mock_engine_inst.generate.call_args_list[2][0][0])
-    assert third_len < second_len, (
-        f"After 'clear', generate() should receive fewer tokens ({third_len}) "
-        f"than it did before the clear ({second_len})."
-    )
+    second_call_tokens = mock_engine_inst.generate.call_args_list[1][0][0]
+    # After clear, conversation_tokens = [bos]. The second message then prepends
+    # user_start + encode(msg) + user_end + assistant_start (all mocked to 999 / [72,101,108]).
+    assert second_call_tokens == [261, 999, 72, 101, 108, 999, 999]
 
 
 def test_interactive_message_generates_response(capsys):
