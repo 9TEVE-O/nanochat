@@ -111,6 +111,75 @@ def test_no_device_flag_calls_autodetect():
     mock_common.autodetect_device_type.assert_called_once()
 
 
+def test_model_tag_passed_to_load_model():
+    """--model-tag is forwarded as model_tag kwarg to load_model."""
+    _, _, mock_checkpoint, _ = _call_main(["--model-tag", "v1"], inputs=["quit"])
+    assert mock_checkpoint.load_model.call_args[1].get("model_tag") == "v1"
+
+
+def test_step_passed_to_load_model():
+    """--step is forwarded as step kwarg to load_model."""
+    _, _, mock_checkpoint, _ = _call_main(["--step", "500"], inputs=["quit"])
+    assert mock_checkpoint.load_model.call_args[1].get("step") == 500
+
+
+def test_default_model_tag_is_none():
+    """When --model-tag is omitted, load_model receives model_tag=None."""
+    _, _, mock_checkpoint, _ = _call_main([], inputs=["quit"])
+    assert mock_checkpoint.load_model.call_args[1].get("model_tag") is None
+
+
+def test_default_step_is_none():
+    """When --step is omitted, load_model receives step=None."""
+    _, _, mock_checkpoint, _ = _call_main([], inputs=["quit"])
+    assert mock_checkpoint.load_model.call_args[1].get("step") is None
+
+
+def test_load_model_phase_is_eval():
+    """load_model is always called with phase='eval'."""
+    _, _, mock_checkpoint, _ = _call_main([], inputs=["quit"])
+    assert mock_checkpoint.load_model.call_args[1].get("phase") == "eval"
+
+
+def test_compute_init_called_exactly_once():
+    """compute_init() is called exactly once per main() invocation."""
+    _, mock_common, *_ = _call_main([], inputs=["quit"])
+    mock_common.compute_init.assert_called_once()
+
+
+def test_load_model_called_exactly_once():
+    """load_model() is called exactly once per main() invocation."""
+    _, _, mock_checkpoint, _ = _call_main([], inputs=["quit"])
+    mock_checkpoint.load_model.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Device-type handling
+
+def test_device_type_cuda_is_valid():
+    """--device-type cuda is a valid choice; argparse must not exit with code 2."""
+    exit_code, *_ = _call_main(["--device-type", "cuda"], inputs=["quit"])
+    assert exit_code != 2
+
+
+def test_device_type_mps_is_valid():
+    """--device-type mps is a valid choice; argparse must not exit with code 2."""
+    exit_code, *_ = _call_main(["--device-type", "mps"], inputs=["quit"])
+    assert exit_code != 2
+
+
+def test_explicit_device_type_passed_to_compute_init():
+    """The explicit --device-type value is passed to compute_init()."""
+    _, mock_common, *_ = _call_main(["--device-type", "cpu"], inputs=["quit"])
+    assert mock_common.compute_init.call_args[0][0] == "cpu"
+
+
+def test_autodetected_device_type_passed_to_compute_init():
+    """The autodetected device type is passed to compute_init()."""
+    _, mock_common, *_ = _call_main([], inputs=["quit"])
+    assert mock_common.compute_init.call_args[0][0] == "cpu"
+
+
 # ---------------------------------------------------------------------------
 # Single-prompt mode  (--prompt given)
 
@@ -141,11 +210,76 @@ def test_single_prompt_exit_skips_generation():
     mock_engine_inst.generate.assert_not_called()
 
 
+def test_single_prompt_exit_prints_goodbye(capsys):
+    """--prompt exit prints 'Goodbye!' just like --prompt quit."""
+    _call_main(["--prompt", "exit"])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
 def test_single_prompt_clear_skips_generation(capsys):
     """--prompt clear resets conversation without generating, then exits."""
     _, _, _, mock_engine_inst = _call_main(["--prompt", "clear"])
     mock_engine_inst.generate.assert_not_called()
     assert "Conversation cleared." in capsys.readouterr().out
+
+
+def test_single_prompt_quit_uppercase(capsys):
+    """--prompt QUIT (uppercase) prints Goodbye and skips generation."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "QUIT"])
+    mock_engine_inst.generate.assert_not_called()
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_single_prompt_exit_uppercase_skips_generation():
+    """--prompt EXIT (uppercase) skips generation."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "EXIT"])
+    mock_engine_inst.generate.assert_not_called()
+
+
+def test_single_prompt_clear_uppercase(capsys):
+    """--prompt CLEAR (uppercase) clears conversation without generating."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "CLEAR"])
+    mock_engine_inst.generate.assert_not_called()
+    assert "Conversation cleared." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Generate kwargs
+
+def test_temperature_passed_to_generate():
+    """--temperature value is forwarded to engine.generate()."""
+    _, _, _, mock_engine_inst = _call_main(["--temperature", "0.9", "--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("temperature") == 0.9
+
+
+def test_top_k_passed_to_generate():
+    """--top-k value is forwarded to engine.generate()."""
+    _, _, _, mock_engine_inst = _call_main(["--top-k", "100", "--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("top_k") == 100
+
+
+def test_default_temperature_passed_to_generate():
+    """Default temperature (0.6) is forwarded to engine.generate()."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("temperature") == 0.6
+
+
+def test_default_top_k_passed_to_generate():
+    """Default top-k (50) is forwarded to engine.generate()."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("top_k") == 50
+
+
+def test_generate_called_with_num_samples_1():
+    """engine.generate() is always called with num_samples=1."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("num_samples") == 1
+
+
+def test_generate_called_with_max_tokens_256():
+    """engine.generate() is always called with max_tokens=256."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("max_tokens") == 256
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +305,41 @@ def test_interactive_keyboard_interrupt_exits(capsys):
     assert "Goodbye!" in capsys.readouterr().out
 
 
+def test_interactive_quit_uppercase(capsys):
+    """'QUIT' (uppercase) is treated the same as 'quit'."""
+    _call_main([], inputs=["QUIT"])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_interactive_exit_uppercase(capsys):
+    """'EXIT' (uppercase) is treated the same as 'exit'."""
+    _call_main([], inputs=["EXIT"])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_interactive_clear_uppercase(capsys):
+    """'CLEAR' (uppercase) resets the conversation."""
+    _call_main([], inputs=["CLEAR", "quit"])
+    assert "Conversation cleared." in capsys.readouterr().out
+
+
 def test_interactive_empty_input_is_ignored(capsys):
     """An empty line is skipped; the loop continues and can still generate."""
     _, _, _, mock_engine_inst = _call_main([], inputs=["", "Hello", "quit"])
     mock_engine_inst.generate.assert_called_once()
     assert "Assistant:" in capsys.readouterr().out
+
+
+def test_interactive_whitespace_only_input_is_ignored():
+    """A whitespace-only interactive input is treated as empty and skipped."""
+    _, _, _, mock_engine_inst = _call_main([], inputs=["   ", "Hello", "quit"])
+    mock_engine_inst.generate.assert_called_once()
+
+
+def test_interactive_multiple_empty_lines_all_skipped():
+    """Multiple consecutive empty lines are all ignored before a real message."""
+    _, _, _, mock_engine_inst = _call_main([], inputs=["", "", "", "Hello", "quit"])
+    mock_engine_inst.generate.assert_called_once()
 
 
 def test_interactive_clear_resets_conversation_tokens(capsys):
@@ -231,3 +395,137 @@ def test_interactive_multi_turn():
         main()
 
     assert call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Startup banner
+
+def test_startup_banner_printed(capsys):
+    """main() prints the NanoChat Interactive Mode banner on startup."""
+    _call_main([], inputs=["quit"])
+    assert "NanoChat Interactive Mode" in capsys.readouterr().out
+
+
+def test_startup_banner_contains_instructions(capsys):
+    """Banner mentions quit/exit and clear commands."""
+    _call_main([], inputs=["quit"])
+    out = capsys.readouterr().out
+    assert "quit" in out
+    assert "clear" in out
+
+
+# ---------------------------------------------------------------------------
+# Token-stream and conversation-state
+
+def test_assistant_end_appended_when_missing():
+    """When the last generated token is not assistant_end, it is appended.
+    Verified by checking the second turn receives the appended token."""
+    sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
+    mock_engine_inst.generate.side_effect = [
+        iter([([42], None)]),
+        iter([([42], None)]),
+    ]
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["Hello", "World", "quit"]))
+        from nanochat.__main__ import main
+        main()
+
+    second_call_tokens = mock_engine_inst.generate.call_args_list[1][0][0]
+    assert _ASSISTANT_END_TOKEN in second_call_tokens
+    assert 42 in second_call_tokens
+
+
+def test_assistant_end_not_duplicated_when_present():
+    """When the last generated token equals assistant_end (999), it is NOT appended again.
+    The second turn sees one fewer 999 compared to when a non-assistant_end token is generated."""
+    # Run 1: response token IS assistant_end (999) — should NOT be appended
+    sp1, _, _, mei1 = _make_mocks()
+    mei1.generate.side_effect = [iter([([999], None)]), iter([([42], None)])]
+    with ExitStack() as s:
+        s.enter_context(patch.dict("sys.modules", sp1))
+        s.enter_context(patch("sys.argv", ["nanochat"]))
+        s.enter_context(patch("builtins.input", side_effect=["Hello", "World", "quit"]))
+        from nanochat.__main__ import main
+        main()
+    count_no_dup = mei1.generate.call_args_list[1][0][0].count(999)
+
+    # Run 2: response token is NOT assistant_end (42) — 999 IS appended
+    sp2, _, _, mei2 = _make_mocks()
+    mei2.generate.side_effect = [iter([([42], None)]), iter([([42], None)])]
+    with ExitStack() as s:
+        s.enter_context(patch.dict("sys.modules", sp2))
+        s.enter_context(patch("sys.argv", ["nanochat"]))
+        s.enter_context(patch("builtins.input", side_effect=["Hello", "World", "quit"]))
+        from nanochat.__main__ import main
+        main()
+    count_with_dup = mei2.generate.call_args_list[1][0][0].count(999)
+
+    assert count_no_dup == count_with_dup - 1
+
+
+def test_conversation_tokens_accumulate_across_turns():
+    """Tokens from turn 1 response are present in the token list for turn 2."""
+    sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
+    mock_engine_inst.generate.side_effect = [
+        iter([([77], None)]),
+        iter([([42], None)]),
+    ]
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["Hello", "World", "quit"]))
+        from nanochat.__main__ import main
+        main()
+
+    second_call_tokens = mock_engine_inst.generate.call_args_list[1][0][0]
+    assert 77 in second_call_tokens
+
+
+def test_tokenizer_decode_called_per_streamed_token():
+    """tokenizer.decode() is called once for each token yielded by generate()."""
+    sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
+    mock_engine_inst.generate.return_value = iter([
+        ([10], None),
+        ([20], None),
+        ([30], None),
+    ])
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["Hello", "quit"]))
+        from nanochat.__main__ import main
+        main()
+
+    mock_tokenizer = sys_modules_patch["nanochat.checkpoint_manager"].load_model.return_value[1]
+    assert mock_tokenizer.decode.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Engine instantiation
+
+def test_engine_instantiated_with_model_and_tokenizer():
+    """Engine is constructed with the model and tokenizer returned by load_model."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    mock_model = MagicMock()
+    mock_tokenizer_inst = MagicMock()
+    mock_tokenizer_inst.get_bos_token_id.return_value = 261
+    mock_tokenizer_inst.encode_special.return_value = 999
+    mock_tokenizer_inst.encode.return_value = [1, 2, 3]
+    mock_tokenizer_inst.decode.return_value = "x"
+    mock_checkpoint.load_model.return_value = (mock_model, mock_tokenizer_inst, None)
+
+    mock_engine_cls = sys_modules_patch["nanochat.engine"].Engine
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["quit"]))
+        from nanochat.__main__ import main
+        main()
+
+    mock_engine_cls.assert_called_once_with(mock_model, mock_tokenizer_inst)
