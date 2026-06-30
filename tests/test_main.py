@@ -511,8 +511,9 @@ def test_conversation_tokens_accumulate_across_turns():
     assert 77 in captured[1]
 
 
-def test_tokenizer_decode_called_per_streamed_token():
-    """tokenizer.decode() is called once for each token yielded by generate()."""
+def test_tokenizer_decode_called_per_streamed_token(capsys):
+    """tokenizer.decode() is called once for each token yielded by generate(),
+    and the decoded text is printed to stdout."""
     sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
     mock_engine_inst.generate.return_value = iter([
         ([10], None),
@@ -529,6 +530,8 @@ def test_tokenizer_decode_called_per_streamed_token():
 
     mock_tokenizer = sys_modules_patch["nanochat.checkpoint_manager"].load_model.return_value[1]
     assert mock_tokenizer.decode.call_count == 3
+    # decode.return_value is "Hi" (set in _make_mocks); verify it actually reaches stdout.
+    assert capsys.readouterr().out.count("Hi") == 3
 
 
 # ---------------------------------------------------------------------------
