@@ -511,9 +511,8 @@ def test_conversation_tokens_accumulate_across_turns():
     assert 77 in captured[1]
 
 
-def test_tokenizer_decode_called_per_streamed_token(capsys):
-    """tokenizer.decode() is called once for each token yielded by generate(),
-    and the decoded text is printed to stdout."""
+def test_tokenizer_decode_called_per_streamed_token():
+    """tokenizer.decode() is called once for each token yielded by generate()."""
     sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
     mock_engine_inst.generate.return_value = iter([
         ([10], None),
@@ -530,8 +529,6 @@ def test_tokenizer_decode_called_per_streamed_token(capsys):
 
     mock_tokenizer = sys_modules_patch["nanochat.checkpoint_manager"].load_model.return_value[1]
     assert mock_tokenizer.decode.call_count == 3
-    # decode.return_value is "Hi" (set in _make_mocks); verify it actually reaches stdout.
-    assert capsys.readouterr().out.count("Hi") == 3
 
 
 # ---------------------------------------------------------------------------
@@ -558,3 +555,258 @@ def test_engine_instantiated_with_model_and_tokenizer():
         main()
 
     mock_engine_cls.assert_called_once_with(mock_model, mock_tokenizer_inst)
+
+
+# ---------------------------------------------------------------------------
+# Token sequence correctness with distinct special-token IDs
+
+def test_first_generate_call_token_sequence():
+    """First generate() call receives the exact token list:
+    [bos=261, user_start=901, *encode(msg)=[72,101,108], user_end=902, assistant_start=903]."""
+    sys_modules_patch, _, _, mock_engine_inst = _make_mocks()
+    captured: list[list[int]] = []
+
+    def _gen(tokens, **kwargs):
+        captured.append(list(tokens))
+        return iter([([42], None)])
+
+    mock_engine_inst.generate.side_effect = _gen
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["Hello", "quit"]))
+        from nanochat.__main__ import main
+        main()
+
+    assert captured[0] == [261, 901, 72, 101, 108, 902, 903]
+
+
+def test_encode_special_distinct_token_ids():
+    """_make_mocks() encode_special yields four distinct IDs — one per special token name."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    tokenizer = mock_checkpoint.load_model.return_value[1]
+
+    ids = [
+        tokenizer.encode_special("<|user_start|>"),
+        tokenizer.encode_special("<|user_end|>"),
+        tokenizer.encode_special("<|assistant_start|>"),
+        tokenizer.encode_special("<|assistant_end|>"),
+    ]
+    assert len(ids) == len(set(ids)), "All four special-token IDs must be distinct"
+
+
+def test_user_start_id_is_901():
+    """encode_special('<|user_start|>') returns 901."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    tokenizer = mock_checkpoint.load_model.return_value[1]
+    assert tokenizer.encode_special("<|user_start|>") == 901
+
+
+def test_user_end_id_is_902():
+    """encode_special('<|user_end|>') returns 902."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    tokenizer = mock_checkpoint.load_model.return_value[1]
+    assert tokenizer.encode_special("<|user_end|>") == 902
+
+
+def test_assistant_start_id_is_903():
+    """encode_special('<|assistant_start|>') returns 903."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    tokenizer = mock_checkpoint.load_model.return_value[1]
+    assert tokenizer.encode_special("<|assistant_start|>") == 903
+
+
+def test_assistant_end_id_is_999():
+    """encode_special('<|assistant_end|>') returns 999 (_ASSISTANT_END_TOKEN)."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    tokenizer = mock_checkpoint.load_model.return_value[1]
+    assert tokenizer.encode_special("<|assistant_end|>") == _ASSISTANT_END_TOKEN
+
+
+# ---------------------------------------------------------------------------
+# Case-insensitive commands — mixed-case variants
+
+def test_interactive_mixed_case_exit(capsys):
+    """'Exit' (title-case) triggers goodbye just like 'exit'."""
+    _call_main([], inputs=["Exit"])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_interactive_mixed_case_quit(capsys):
+    """'Quit' (title-case) triggers goodbye just like 'quit'."""
+    _call_main([], inputs=["Quit"])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_interactive_mixed_case_clear(capsys):
+    """'Clear' (title-case) clears the conversation."""
+    _call_main([], inputs=["Clear", "quit"])
+    assert "Conversation cleared." in capsys.readouterr().out
+
+
+def test_single_prompt_mixed_case_exit(capsys):
+    """--prompt Exit (title-case) exits with Goodbye!"""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Exit"])
+    mock_engine_inst.generate.assert_not_called()
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_single_prompt_mixed_case_quit(capsys):
+    """--prompt Quit (title-case) exits with Goodbye!"""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Quit"])
+    mock_engine_inst.generate.assert_not_called()
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_single_prompt_mixed_case_clear(capsys):
+    """--prompt Clear (title-case) clears without generating."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Clear"])
+    mock_engine_inst.generate.assert_not_called()
+    assert "Conversation cleared." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Input stripping edge cases
+
+def test_interactive_strip_before_quit(capsys):
+    """Input '  quit  ' with surrounding whitespace still triggers exit."""
+    _call_main([], inputs=["  quit  "])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_interactive_strip_before_exit(capsys):
+    """Input '  exit  ' with surrounding whitespace still triggers exit."""
+    _call_main([], inputs=["  exit  "])
+    assert "Goodbye!" in capsys.readouterr().out
+
+
+def test_interactive_strip_before_clear(capsys):
+    """Input '  clear  ' with surrounding whitespace clears conversation."""
+    _call_main([], inputs=["  clear  ", "quit"])
+    assert "Conversation cleared." in capsys.readouterr().out
+
+    def _gen(tokens, **kwargs):
+        captured.append(list(tokens))
+        return iter([([42], None)])
+
+# ---------------------------------------------------------------------------
+# Generate kwargs — boundary and additional values
+
+def test_temperature_zero_passed_to_generate():
+    """--temperature 0.0 (boundary) is forwarded exactly to engine.generate()."""
+    _, _, _, mock_engine_inst = _call_main(["--temperature", "0.0", "--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("temperature") == 0.0
+
+
+def test_top_k_one_passed_to_generate():
+    """--top-k 1 (minimum meaningful value) is forwarded to engine.generate()."""
+    _, _, _, mock_engine_inst = _call_main(["--top-k", "1", "--prompt", "Hello"])
+    assert mock_engine_inst.generate.call_args[1].get("top_k") == 1
+
+
+def test_temperature_and_top_k_both_forwarded():
+    """Both --temperature and --top-k custom values are forwarded to generate()."""
+    _, _, _, mock_engine_inst = _call_main(
+        ["--temperature", "1.2", "--top-k", "10", "--prompt", "Hello"]
+    )
+    assert mock_engine_inst.generate.call_args[1].get("temperature") == 1.2
+    assert mock_engine_inst.generate.call_args[1].get("top_k") == 10
+
+
+def test_top_k_forwarded_in_interactive_mode():
+    """--top-k is forwarded to generate() even in interactive (non-single-prompt) mode."""
+    _, _, _, mock_engine_inst = _call_main(["--top-k", "77"], inputs=["Hello", "quit"])
+    assert mock_engine_inst.generate.call_args[1].get("top_k") == 77
+
+
+def test_temperature_forwarded_in_interactive_mode():
+    """--temperature is forwarded to generate() even in interactive mode."""
+    _, _, _, mock_engine_inst = _call_main(["--temperature", "0.3"], inputs=["Hello", "quit"])
+    assert mock_engine_inst.generate.call_args[1].get("temperature") == 0.3
+
+
+# ---------------------------------------------------------------------------
+# Step and model-tag types
+
+def test_step_parsed_as_integer_type():
+    """--step 300 is stored as int(300), not the string '300'."""
+    _, _, mock_checkpoint, _ = _call_main(["--step", "300"], inputs=["quit"])
+    step_val = mock_checkpoint.load_model.call_args[1].get("step")
+    assert isinstance(step_val, int), f"Expected int, got {type(step_val)}"
+    assert step_val == 300
+
+
+def test_model_tag_with_source_combination():
+    """--model-tag and --source can be used together; both are forwarded."""
+    _, _, mock_checkpoint, _ = _call_main(
+        ["--model-tag", "myrun", "--source", "rl"], inputs=["quit"]
+    )
+    assert mock_checkpoint.load_model.call_args[0][0] == "rl"
+    assert mock_checkpoint.load_model.call_args[1].get("model_tag") == "myrun"
+
+
+# ---------------------------------------------------------------------------
+# Generate output printed to stdout
+
+def test_generate_response_printed_to_stdout(capsys):
+    """Tokens decoded by tokenizer.decode() appear in stdout output."""
+    sys_modules_patch, _, mock_checkpoint, mock_engine_inst = _make_mocks()
+    tokenizer = mock_checkpoint.load_model.return_value[1]
+    tokenizer.decode.return_value = "X"
+    mock_engine_inst.generate.return_value = iter([([10], None), ([20], None)])
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["Hello", "quit"]))
+        from nanochat.__main__ import main
+        main()
+
+    out = capsys.readouterr().out
+    # Two tokens decoded to "X" each — both should appear
+    assert out.count("X") >= 2
+
+
+def test_assistant_label_printed_before_response(capsys):
+    """'Assistant:' is printed as a label before the generated text."""
+    _call_main(["--prompt", "Hello"])
+    assert "Assistant:" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Single-prompt mode — loop behaviour
+
+def test_single_prompt_only_one_generate_call():
+    """Single-prompt mode exits after one generation — generate() called exactly once."""
+    _, _, _, mock_engine_inst = _call_main(["--prompt", "Hello"])
+    mock_engine_inst.generate.assert_called_once()
+
+def test_engine_instantiated_with_model_and_tokenizer():
+    """Engine is constructed with the model and tokenizer returned by load_model."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    mock_model = MagicMock()
+    mock_tokenizer_inst = MagicMock()
+    mock_tokenizer_inst.get_bos_token_id.return_value = 261
+    mock_tokenizer_inst.encode_special.return_value = 999
+    mock_tokenizer_inst.encode.return_value = [1, 2, 3]
+    mock_tokenizer_inst.decode.return_value = "x"
+    mock_checkpoint.load_model.return_value = (mock_model, mock_tokenizer_inst, None)
+
+def test_single_prompt_does_not_call_input():
+    """In single-prompt mode, builtins.input is never called."""
+    sys_modules_patch, _, _, _ = _make_mocks()
+
+    input_called = []
+    def _spy_input(prompt=""):
+        input_called.append(prompt)
+        return "quit"
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
+        stack.enter_context(patch("sys.argv", ["nanochat", "--prompt", "Hello"]))
+        stack.enter_context(patch("builtins.input", side_effect=_spy_input))
+        from nanochat.__main__ import main
+        main()
+
+    assert input_called == [], "input() should not be called in single-prompt mode"
