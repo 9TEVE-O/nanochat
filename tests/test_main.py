@@ -686,6 +686,9 @@ def test_interactive_strip_before_clear(capsys):
     _call_main([], inputs=["  clear  ", "quit"])
     assert "Conversation cleared." in capsys.readouterr().out
 
+    def _gen(tokens, **kwargs):
+        captured.append(list(tokens))
+        return iter([([42], None)])
 
 # ---------------------------------------------------------------------------
 # Generate kwargs — boundary and additional values
@@ -755,7 +758,8 @@ def test_generate_response_printed_to_stdout(capsys):
 
     with ExitStack() as stack:
         stack.enter_context(patch.dict("sys.modules", sys_modules_patch))
-        stack.enter_context(patch("sys.argv", ["nanochat", "--prompt", "Hello"]))
+        stack.enter_context(patch("sys.argv", ["nanochat"]))
+        stack.enter_context(patch("builtins.input", side_effect=["Hello", "quit"]))
         from nanochat.__main__ import main
         main()
 
@@ -778,6 +782,16 @@ def test_single_prompt_only_one_generate_call():
     _, _, _, mock_engine_inst = _call_main(["--prompt", "Hello"])
     mock_engine_inst.generate.assert_called_once()
 
+def test_engine_instantiated_with_model_and_tokenizer():
+    """Engine is constructed with the model and tokenizer returned by load_model."""
+    sys_modules_patch, _, mock_checkpoint, _ = _make_mocks()
+    mock_model = MagicMock()
+    mock_tokenizer_inst = MagicMock()
+    mock_tokenizer_inst.get_bos_token_id.return_value = 261
+    mock_tokenizer_inst.encode_special.return_value = 999
+    mock_tokenizer_inst.encode.return_value = [1, 2, 3]
+    mock_tokenizer_inst.decode.return_value = "x"
+    mock_checkpoint.load_model.return_value = (mock_model, mock_tokenizer_inst, None)
 
 def test_single_prompt_does_not_call_input():
     """In single-prompt mode, builtins.input is never called."""
